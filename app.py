@@ -8,8 +8,9 @@ from PIL import Image
 import uuid
 from datetime import datetime
 import base64
+import tempfile
 
-# ✅ Page config must come FIRST - remove duplicate
+# ✅ Page config must come FIRST
 st.set_page_config(
     page_title="Apple Image Collector - TEAM UNISOLE", 
     layout="centered",
@@ -22,64 +23,68 @@ def connect_drive():
     try:
         # Set up credentials from Streamlit secrets
         credentials_json = st.secrets["google"]["CREDENTIALS"]
-        token_json = st.secrets["google"].get("TOKEN", "{}")
+        token_json = st.secrets["google"]["TOKEN"]
         
-        # Save credentials to temporary file
-        with open("credentials.json", "w") as f:
+        # Create temporary files
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
             f.write(credentials_json)
+            credentials_file = f.name
         
-        # Save token to temporary file if exists
-        with open("token.json", "w") as f:
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
             f.write(token_json)
+            token_file = f.name
         
-        # Auth with PyDrive2 - Streamlit Cloud compatible
+        # Auth with PyDrive2
         gauth = GoogleAuth()
         
-        # Load client config first
-        gauth.LoadClientConfigFile("credentials.json")
+        # Load client config
+        gauth.LoadClientConfigFile(credentials_file)
         
-        # Try to load existing credentials
-        gauth.LoadCredentialsFile("token.json")
+        # Set OAuth settings
+        gauth.settings['oauth_scope'] = ["https://www.googleapis.com/auth/drive"]
+        gauth.settings['get_refresh_token'] = True
+        
+        # Load existing credentials
+        gauth.LoadCredentialsFile(token_file)
         
         if gauth.credentials is None:
-            # For Streamlit Cloud - use CommandLineAuth instead of LocalWebserverAuth
-            st.error("❌ No valid token found. Please update your TOKEN in Streamlit secrets.")
-            st.info("""
-            **Setup Instructions:**
-            1. Run the auth locally first to get token.json
-            2. Copy the token.json content to Streamlit secrets as TOKEN
-            3. Redeploy the app
-            """)
+            st.error("❌ No valid credentials found. Please re-run the authentication script.")
             return None
         elif gauth.access_token_expired:
             try:
+                # Refresh the token
                 gauth.Refresh()
-                # Save refreshed token back (though it won't persist in Cloud)
-                gauth.SaveCredentialsFile("token.json")
+                st.success("🔄 Token refreshed successfully!")
             except Exception as refresh_error:
-                st.error(f"Token refresh failed: {refresh_error}")
-                st.info("Please update your TOKEN in Streamlit secrets with a fresh token.")
+                st.error(f"❌ Token refresh failed: {refresh_error}")
+                st.error("Please re-run the authentication script to get a new token.")
                 return None
         else:
             gauth.Authorize()
         
+        # Clean up temporary files
+        try:
+            os.unlink(credentials_file)
+            os.unlink(token_file)
+        except:
+            pass
+        
         return GoogleDrive(gauth)
         
     except KeyError as e:
-        st.error(f"Missing Streamlit secret: {str(e)}")
+        st.error(f"❌ Missing Streamlit secret: {str(e)}")
         st.error("Please ensure both CREDENTIALS and TOKEN are set in [google] section of Streamlit secrets.")
         st.info("""
         **Expected format in secrets.toml:**
         ```
         [google]
-        CREDENTIALS = "..."
-        TOKEN = "..."
+        CREDENTIALS = '{"your": "credentials"}'
+        TOKEN = '{"your": "token"}'
         ```
         """)
         return None
     except Exception as e:
-        st.error(f"Google Drive connection failed: {str(e)}")
-        st.error("Please check your credentials and token in Streamlit secrets.")
+        st.error(f"❌ Google Drive connection failed: {str(e)}")
         return None
 
 # Initialize drive connection
@@ -114,6 +119,12 @@ st.markdown("""
 # Check if drive is connected
 if drive is None:
     st.error("❌ Google Drive connection failed. Please check your credentials.")
+    st.info("""
+    **To fix this issue:**
+    1. Run the authentication script locally to get a fresh token
+    2. Copy the new token to your Streamlit secrets
+    3. Restart your Streamlit app
+    """)
     st.stop()
 
 # --- Image Capture/Upload Section ---
@@ -252,7 +263,7 @@ if uploaded_image:
                     # Clean variety name for filename
                     clean_variety = "".join(c for c in variety if c.isalnum() or c in (' ', '-', '_')).rstrip()
                     
-                    filename = f"apple_dataset/{timestamp}_{clean_variety}_{unique_id}.jpg"
+                    filename = f"apple_dataset_{timestamp}_{clean_variety}_{unique_id}.jpg"
                     
                     # Prepare metadata
                     metadata = {
@@ -270,14 +281,12 @@ if uploaded_image:
                     # Create file on Google Drive
                     file_drive = drive.CreateFile({
                         'title': filename,
-                        'parents': [{"id": "root"}],
-                        'description': str(metadata)
+                        'description': json.dumps(metadata, ensure_ascii=False)
                     })
                     
-                    # Convert image to base64 for upload
+                    # Set content from uploaded image
                     uploaded_image.seek(0)
-                    image_data = uploaded_image.read()
-                    file_drive.SetContentString(base64.b64encode(image_data).decode())
+                    file_drive.content = uploaded_image
                     file_drive.Upload()
                     
                     st.success("✅ Thank you! Image uploaded successfully to our research database!")
