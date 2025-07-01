@@ -87,6 +87,40 @@ def connect_drive():
         st.error(f"❌ Google Drive connection failed: {str(e)}")
         return None
 
+# Function to find or create the apple_dataset folder
+@st.cache_data
+def get_or_create_folder(_drive, folder_name="apple_dataset"):
+    """
+    Find existing folder or create new one in Google Drive
+    Returns folder ID
+    """
+    try:
+        # Search for existing folder
+        file_list = _drive.ListFile({
+            'q': f"title='{folder_name}' and mimeType='application/vnd.google-apps.folder' and trashed=false"
+        }).GetList()
+        
+        if file_list:
+            # Folder exists, return its ID
+            folder_id = file_list[0]['id']
+            st.info(f"📁 Using existing folder: {folder_name}")
+            return folder_id
+        else:
+            # Create new folder
+            folder_metadata = {
+                'title': folder_name,
+                'mimeType': 'application/vnd.google-apps.folder'
+            }
+            folder = _drive.CreateFile(folder_metadata)
+            folder.Upload()
+            folder_id = folder['id']
+            st.success(f"📁 Created new folder: {folder_name}")
+            return folder_id
+            
+    except Exception as e:
+        st.error(f"❌ Error with folder operations: {str(e)}")
+        return None
+
 # Initialize drive connection
 drive = connect_drive()
 
@@ -126,6 +160,18 @@ if drive is None:
     3. Restart your Streamlit app
     """)
     st.stop()
+
+# Get or create the apple_dataset folder
+folder_id = get_or_create_folder(drive, "apple_dataset")
+if folder_id is None:
+    st.error("❌ Failed to access or create the apple_dataset folder.")
+    st.stop()
+
+# Display folder information
+st.info(f"""
+📁 **Storage Location:** All images will be saved to the 'apple_dataset' folder in Google Drive.
+🔗 **Access:** Log in to `unisole.empower@gmail.com` → My Drive → apple_dataset folder
+""")
 
 # --- Image Capture/Upload Section ---
 st.subheader("📸 Share Your Apple Images / अपनी सेब की तस्वीरें साझा करें")
@@ -255,7 +301,7 @@ if uploaded_image:
             st.error("❌ Please enter apple variety / कृपया सेब की किस्म दर्ज करें")
         else:
             try:
-                with st.spinner("⏳ Uploading to research database... / अनुसंधान डेटाबेस में अपलोड हो रहा है..."):
+                with st.spinner("⏳ Uploading to apple_dataset folder... / apple_dataset फोल्डर में अपलोड हो रहा है..."):
                     # Create unique filename with metadata
                     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
                     unique_id = uuid.uuid4().hex[:8]
@@ -275,13 +321,15 @@ if uploaded_image:
                         'quality': quality,
                         'notes': additional_notes,
                         'upload_time': datetime.now().isoformat(),
-                        'contributor_type': 'farmer_app'
+                        'contributor_type': 'farmer_app',
+                        'folder': 'apple_dataset'
                     }
                     
-                    # Create file on Google Drive
+                    # Create file on Google Drive in the specific folder
                     file_drive = drive.CreateFile({
                         'title': filename,
-                        'description': json.dumps(metadata, ensure_ascii=False)
+                        'description': json.dumps(metadata, ensure_ascii=False),
+                        'parents': [{'id': folder_id}]  # This uploads to the specific folder
                     })
                     
                     # Set content from uploaded image
@@ -289,8 +337,8 @@ if uploaded_image:
                     file_drive.content = uploaded_image
                     file_drive.Upload()
                     
-                    st.success("✅ Thank you! Image uploaded successfully to our research database!")
-                    st.success("✅ धन्यवाद! तस्वीर सफलतापूर्वक हमारे अनुसंधान डेटाबेस में अपलोड हो गई!")
+                    st.success("✅ Thank you! Image uploaded successfully to the apple_dataset folder!")
+                    st.success("✅ धन्यवाद! तस्वीर सफलतापूर्वक apple_dataset फोल्डर में अपलोड हो गई!")
                     st.balloons()
                     
                     # Show contribution summary
@@ -299,6 +347,13 @@ if uploaded_image:
                     - Variety: {variety}
                     - Location: {location or 'Not specified'}
                     - Upload ID: {unique_id}
+                    - 📁 Saved to: apple_dataset folder
+                    - 🔍 Filename: {filename}
+                    
+                    **To find your image:**
+                    1. Log in to Google Drive with unisole.empower@gmail.com
+                    2. Go to My Drive → apple_dataset folder
+                    3. Search for: {filename}
                     
                     This data will help train AI models to benefit farmers across India!
                     """)
