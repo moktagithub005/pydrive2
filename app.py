@@ -88,22 +88,20 @@ def connect_drive():
         return None
 
 # Function to find or create the apple_dataset folder
-@st.cache_data
-def get_or_create_folder(_drive, folder_name="apple_dataset"):
+def get_or_create_folder(drive, folder_name="apple_dataset"):
     """
     Find existing folder or create new one in Google Drive
     Returns folder ID
     """
     try:
         # Search for existing folder
-        file_list = _drive.ListFile({
+        file_list = drive.ListFile({
             'q': f"title='{folder_name}' and mimeType='application/vnd.google-apps.folder' and trashed=false"
         }).GetList()
         
         if file_list:
             # Folder exists, return its ID
             folder_id = file_list[0]['id']
-            st.info(f"📁 Using existing folder: {folder_name}")
             return folder_id
         else:
             # Create new folder
@@ -111,10 +109,9 @@ def get_or_create_folder(_drive, folder_name="apple_dataset"):
                 'title': folder_name,
                 'mimeType': 'application/vnd.google-apps.folder'
             }
-            folder = _drive.CreateFile(folder_metadata)
+            folder = drive.CreateFile(folder_metadata)
             folder.Upload()
             folder_id = folder['id']
-            st.success(f"📁 Created new folder: {folder_name}")
             return folder_id
             
     except Exception as e:
@@ -159,12 +156,6 @@ if drive is None:
     2. Copy the new token to your Streamlit secrets
     3. Restart your Streamlit app
     """)
-    st.stop()
-
-# Get or create the apple_dataset folder
-folder_id = get_or_create_folder(drive, "apple_dataset")
-if folder_id is None:
-    st.error("❌ Failed to access or create the apple_dataset folder.")
     st.stop()
 
 # Display folder information
@@ -302,6 +293,13 @@ if uploaded_image:
         else:
             try:
                 with st.spinner("⏳ Uploading to apple_dataset folder... / apple_dataset फोल्डर में अपलोड हो रहा है..."):
+                    
+                    # Get or create the apple_dataset folder
+                    folder_id = get_or_create_folder(drive, "apple_dataset")
+                    if folder_id is None:
+                        st.error("❌ Failed to access or create the apple_dataset folder.")
+                        st.stop()
+                    
                     # Create unique filename with metadata
                     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
                     unique_id = uuid.uuid4().hex[:8]
@@ -384,4 +382,4 @@ We are a research-driven startup incubated at **IARI (Indian Agricultural Resear
 """)
 
 st.markdown("---")
-st.markdown("*© 2024 TEAM UNISOLE - Building the future of Indian agriculture with AI*")
+st.markdown("*© 2025 TEAM UNISOLE - Building the future of Indian agriculture with AI*")
