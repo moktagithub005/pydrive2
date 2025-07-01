@@ -1,8 +1,10 @@
 import streamlit as st
+import json
+import os
+import io
 from pydrive2.auth import GoogleAuth
 from pydrive2.drive import GoogleDrive
 from PIL import Image
-import io
 import uuid
 from datetime import datetime
 import base64
@@ -14,22 +16,37 @@ st.set_page_config(
     page_icon="🍎"
 )
 
-# Authenticate Google Drive
+# Authenticate Google Drive using Streamlit secrets
 @st.cache_resource
 def connect_drive():
     try:
+        # Set up config file from Streamlit secret
+        credentials_json = st.secrets["CREDENTIALS"]
+        
+        # Save to temporary file
+        with open("credentials.json", "w") as f:
+            f.write(credentials_json)
+        
+        # Auth with PyDrive2
         gauth = GoogleAuth()
         gauth.LoadCredentialsFile("token.json")
+        
         if gauth.credentials is None:
+            gauth.LoadClientConfigFile("credentials.json")
             gauth.LocalWebserverAuth()
         elif gauth.access_token_expired:
             gauth.Refresh()
         else:
             gauth.Authorize()
+        
+        # Save token for reuse
         gauth.SaveCredentialsFile("token.json")
+        
         return GoogleDrive(gauth)
+        
     except Exception as e:
         st.error(f"Google Drive connection failed: {str(e)}")
+        st.error("Please ensure CREDENTIALS are properly set in Streamlit secrets.")
         return None
 
 # Initialize drive connection
@@ -263,7 +280,7 @@ We are a research-driven startup incubated at **IARI (Indian Agricultural Resear
 
 **Contact Us:**
 - 📞 Phone: 7876471141
-- 📧 Email: unisole.empower@gmail.com
+- 📧 Email: team.unisole@gmail.com
 - 🏢 Incubated at: IARI, New Delhi
 
 *Your contribution today helps build tomorrow's farming technology!*
