@@ -3,13 +3,11 @@ from pydrive2.drive import GoogleDrive
 
 gauth = GoogleAuth()
 
-# Tell PyDrive2 where to find your client_secrets.json
+# Force the OAuth flow to re-consent and request a refresh token
 gauth.LoadClientConfigFile("credentials.json")
-
-# Start local server to authenticate
+gauth.settings['oauth_scope'] = ["https://www.googleapis.com/auth/drive"]
+gauth.settings['get_refresh_token'] = True
 gauth.LocalWebserverAuth()
 
-# Save credentials to avoid logging in next time
 gauth.SaveCredentialsFile("token.json")
-
-print("✅ Authentication successful. token.json saved.")
+drive = GoogleDrive(gauth)
