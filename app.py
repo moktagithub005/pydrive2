@@ -68,6 +68,14 @@ def connect_drive():
     except KeyError as e:
         st.error(f"Missing Streamlit secret: {str(e)}")
         st.error("Please ensure both CREDENTIALS and TOKEN are set in [google] section of Streamlit secrets.")
+        st.info("""
+        **Expected format in secrets.toml:**
+        ```
+        [google]
+        CREDENTIALS = "..."
+        TOKEN = "..."
+        ```
+        """)
         return None
     except Exception as e:
         st.error(f"Google Drive connection failed: {str(e)}")
