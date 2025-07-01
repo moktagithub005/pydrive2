@@ -16,37 +16,62 @@ st.set_page_config(
     page_icon="🍎"
 )
 
-# Authenticate Google Drive using Streamlit secrets
+# Authenticate Google Drive using Streamlit secrets (Streamlit Cloud compatible)
 @st.cache_resource
 def connect_drive():
     try:
-        # Set up config file from Streamlit secret
-        credentials_json = st.secrets["CREDENTIALS"]
+        # Set up credentials from Streamlit secrets
+        credentials_json = st.secrets["google"]["CREDENTIALS"]
+        token_json = st.secrets["google"].get("TOKEN", "{}")
         
-        # Save to temporary file
+        # Save credentials to temporary file
         with open("credentials.json", "w") as f:
             f.write(credentials_json)
         
-        # Auth with PyDrive2
+        # Save token to temporary file if exists
+        with open("token.json", "w") as f:
+            f.write(token_json)
+        
+        # Auth with PyDrive2 - Streamlit Cloud compatible
         gauth = GoogleAuth()
+        
+        # Load client config first
+        gauth.LoadClientConfigFile("credentials.json")
+        
+        # Try to load existing credentials
         gauth.LoadCredentialsFile("token.json")
         
         if gauth.credentials is None:
-            gauth.LoadClientConfigFile("credentials.json")
-            gauth.LocalWebserverAuth()
+            # For Streamlit Cloud - use CommandLineAuth instead of LocalWebserverAuth
+            st.error("❌ No valid token found. Please update your TOKEN in Streamlit secrets.")
+            st.info("""
+            **Setup Instructions:**
+            1. Run the auth locally first to get token.json
+            2. Copy the token.json content to Streamlit secrets as TOKEN
+            3. Redeploy the app
+            """)
+            return None
         elif gauth.access_token_expired:
-            gauth.Refresh()
+            try:
+                gauth.Refresh()
+                # Save refreshed token back (though it won't persist in Cloud)
+                gauth.SaveCredentialsFile("token.json")
+            except Exception as refresh_error:
+                st.error(f"Token refresh failed: {refresh_error}")
+                st.info("Please update your TOKEN in Streamlit secrets with a fresh token.")
+                return None
         else:
             gauth.Authorize()
         
-        # Save token for reuse
-        gauth.SaveCredentialsFile("token.json")
-        
         return GoogleDrive(gauth)
         
+    except KeyError as e:
+        st.error(f"Missing Streamlit secret: {str(e)}")
+        st.error("Please ensure both CREDENTIALS and TOKEN are set in [google] section of Streamlit secrets.")
+        return None
     except Exception as e:
         st.error(f"Google Drive connection failed: {str(e)}")
-        st.error("Please ensure CREDENTIALS are properly set in Streamlit secrets.")
+        st.error("Please check your credentials and token in Streamlit secrets.")
         return None
 
 # Initialize drive connection
