@@ -17,70 +17,98 @@ st.set_page_config(
     page_icon="🍎"
 )
 
-# Authenticate Google Drive using Streamlit secrets (Streamlit Cloud compatible)
+# Enhanced Google Drive authentication with better error handling
 @st.cache_resource
 def connect_drive():
     try:
-        # Set up credentials from Streamlit secrets
+        # Get credentials from Streamlit secrets
         credentials_json = st.secrets["google"]["CREDENTIALS"]
-        token_json = st.secrets["google"]["TOKEN"]
         
-        # Create temporary files
+        # Create temporary credentials file
         with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
             f.write(credentials_json)
             credentials_file = f.name
         
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
-            f.write(token_json)
-            token_file = f.name
-        
-        # Auth with PyDrive2
+        # Initialize GoogleAuth
         gauth = GoogleAuth()
-        
-        # Load client config
         gauth.LoadClientConfigFile(credentials_file)
         
-        # Set OAuth settings
+        # Configure OAuth settings
         gauth.settings['oauth_scope'] = ["https://www.googleapis.com/auth/drive"]
         gauth.settings['get_refresh_token'] = True
         
-        # Load existing credentials
-        gauth.LoadCredentialsFile(token_file)
-        
-        if gauth.credentials is None:
-            st.error("❌ No valid credentials found. Please re-run the authentication script.")
-            return None
-        elif gauth.access_token_expired:
+        # Method 1: Try using saved credentials (if TOKEN exists in secrets)
+        if "TOKEN" in st.secrets["google"]:
             try:
-                # Refresh the token
-                gauth.Refresh()
-                st.success("🔄 Token refreshed successfully!")
-            except Exception as refresh_error:
-                st.error(f"❌ Token refresh failed: {refresh_error}")
-                st.error("Please re-run the authentication script to get a new token.")
-                return None
-        else:
-            gauth.Authorize()
+                token_json = st.secrets["google"]["TOKEN"]
+                with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
+                    f.write(token_json)
+                    token_file = f.name
+                
+                gauth.LoadCredentialsFile(token_file)
+                
+                # Check if credentials are valid
+                if gauth.credentials and not gauth.access_token_expired:
+                    gauth.Authorize()
+                    # Clean up
+                    os.unlink(credentials_file)
+                    os.unlink(token_file)
+                    return GoogleDrive(gauth)
+                elif gauth.credentials and gauth.access_token_expired:
+                    # Try to refresh
+                    gauth.Refresh()
+                    gauth.Authorize()
+                    # Clean up
+                    os.unlink(credentials_file)
+                    os.unlink(token_file)
+                    return GoogleDrive(gauth)
+                    
+            except Exception as token_error:
+                st.warning(f"⚠️ Saved token failed: {str(token_error)}")
+                # Continue to Method 2
         
-        # Clean up temporary files
-        try:
-            os.unlink(credentials_file)
-            os.unlink(token_file)
-        except:
-            pass
+        # Method 2: Use service account approach (if SERVICE_ACCOUNT exists)
+        if "SERVICE_ACCOUNT" in st.secrets["google"]:
+            try:
+                service_account_json = st.secrets["google"]["SERVICE_ACCOUNT"]
+                with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
+                    f.write(service_account_json)
+                    service_account_file = f.name
+                
+                gauth.settings['service_config'] = {
+                    'client_service_email': json.loads(service_account_json)['client_email'],
+                    'client_service_key_file': service_account_file,
+                    'client_pkl_file': None,
+                    'client_secrets_file': None
+                }
+                
+                gauth.ServiceAuth()
+                # Clean up
+                os.unlink(credentials_file)
+                os.unlink(service_account_file)
+                return GoogleDrive(gauth)
+                
+            except Exception as service_error:
+                st.warning(f"⚠️ Service account failed: {str(service_error)}")
         
-        return GoogleDrive(gauth)
+        # Method 3: Manual authorization flow (for local development)
+        st.error("❌ Authentication failed. Please follow the setup instructions below.")
+        return None
         
     except KeyError as e:
         st.error(f"❌ Missing Streamlit secret: {str(e)}")
-        st.error("Please ensure both CREDENTIALS and TOKEN are set in [google] section of Streamlit secrets.")
         st.info("""
-        **Expected format in secrets.toml:**
-        ```
-        [google]
-        CREDENTIALS = '{"your": "credentials"}'
-        TOKEN = '{"your": "token"}'
-        ```
+        **Setup Instructions:**
+        
+        **Option 1: OAuth Token (Recommended for development)**
+        1. Run the authentication script locally
+        2. Add both CREDENTIALS and TOKEN to Streamlit secrets
+        
+        **Option 2: Service Account (Recommended for production)**
+        1. Create a service account in Google Cloud Console
+        2. Download the service account key JSON
+        3. Add SERVICE_ACCOUNT to Streamlit secrets
+        4. Share your Google Drive folder with the service account email
         """)
         return None
     except Exception as e:
@@ -149,13 +177,94 @@ st.markdown("""
 
 # Check if drive is connected
 if drive is None:
-    st.error("❌ Google Drive connection failed. Please check your credentials.")
-    st.info("""
-    **To fix this issue:**
-    1. Run the authentication script locally to get a fresh token
-    2. Copy the new token to your Streamlit secrets
-    3. Restart your Streamlit app
-    """)
+    st.error("❌ Google Drive connection failed. Please check your setup.")
+    
+    # Show setup instructions
+    st.markdown("### 🔧 Setup Instructions")
+    
+    tab1, tab2, tab3 = st.tabs(["🔑 OAuth Setup", "🛠️ Service Account Setup", "🆘 Troubleshooting"])
+    
+    with tab1:
+        st.markdown("""
+        **OAuth Token Setup (For Development):**
+        
+        1. **Run this authentication script locally:**
+        ```python
+        from pydrive2.auth import GoogleAuth
+        from pydrive2.drive import GoogleDrive
+        import json
+        
+        # Create GoogleAuth instance
+        gauth = GoogleAuth()
+        gauth.LoadClientConfigFile("credentials.json")
+        gauth.settings['oauth_scope'] = ["https://www.googleapis.com/auth/drive"]
+        gauth.settings['get_refresh_token'] = True
+        
+        # Authenticate (opens browser)
+        gauth.LocalWebserverAuth()
+        gauth.SaveCredentialsFile("token.json")
+        
+        # Test connection
+        drive = GoogleDrive(gauth)
+        print("✅ Success!")
+        
+        # Show token content
+        with open("token.json", "r") as f:
+            print("Copy this to Streamlit secrets:")
+            print(f.read())
+        ```
+        
+        2. **Add to Streamlit secrets:**
+        ```toml
+        [google]
+        CREDENTIALS = '{"installed":{"client_id":"...","client_secret":"..."}}'
+        TOKEN = '{"access_token":"...","refresh_token":"..."}'
+        ```
+        """)
+    
+    with tab2:
+        st.markdown("""
+        **Service Account Setup (For Production):**
+        
+        1. **Create Service Account:**
+           - Go to Google Cloud Console
+           - Create a new service account
+           - Download the JSON key file
+        
+        2. **Share Google Drive folder:**
+           - Share your Google Drive folder with the service account email
+           - Give it "Editor" permissions
+        
+        3. **Add to Streamlit secrets:**
+        ```toml
+        [google]
+        SERVICE_ACCOUNT = '{"type":"service_account","project_id":"...","private_key":"..."}'
+        ```
+        """)
+    
+    with tab3:
+        st.markdown("""
+        **Common Issues & Solutions:**
+        
+        **Issue:** "Token has been expired or revoked"
+        **Solution:** 
+        - Generate a completely new token
+        - Make sure you're using the correct Google account
+        - Check that your OAuth consent screen is properly configured
+        
+        **Issue:** "invalid_grant"
+        **Solution:**
+        - Your token might be from a different environment
+        - Regenerate the token on the same machine/environment
+        - Ensure the time on your machine is correct
+        
+        **Issue:** "Access denied"
+        **Solution:**
+        - Check Google Drive API is enabled
+        - Verify OAuth scopes include drive access
+        - Ensure the Google account has proper permissions
+        """)
+    
     st.stop()
 
 # Display folder information
