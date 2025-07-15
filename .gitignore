@@ -1,40 +1,5 @@
-# Python bytecode
-__pycache__/
-*.py[cod]
-*$py.class
-
-# Jupyter Notebooks checkpoints
-.ipynb_checkpoints/
-
-# Virtual environment
-venv/
-env/
-
-# OS-specific files
-.DS_Store
-Thumbs.db
-
-# Streamlit secrets
-.streamlit/secrets.toml
-
-# Google API credentials and tokens
 token.json
 credentials.json
 credentials.dat
-
-# PyDrive auth cache
-settings.yaml
-
-# Logs and temp files
-*.log
-*.tmp
-*.bak
-*.swp
-*.swo
-
-# VSCode settings (optional)
-.vscode/
-
-# Token diagnostic/debug scripts
-token_diagnostic.py
-
+.streamlit/secrets.toml
+client_secrets.json
