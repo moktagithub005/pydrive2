@@ -231,9 +231,10 @@ if st.session_state.current_image is not None:
             - Build technology for rural India 🇮🇳
             """)
             
-            # Reset button to upload another image
-            if st.button("📸 Upload Another Image / एक और तस्वीर अपलोड करें", use_container_width=True):
-                st.experimental_rerun()
+    # Reset button to upload another image (outside the form)
+    if st.session_state.total_uploads > 0:
+        if st.button("📸 Upload Another Image / एक और तस्वीर अपलोड करें", use_container_width=True):
+            st.experimental_rerun()
 
 else:
     st.info("👆 Please upload or take a picture of an apple to continue / कृपया आगे बढ़ने के लिए सेब की तस्वीर अपलोड करें या लें")
