@@ -1,9 +1,45 @@
-credentials.json
-token.json
+# Ignore Python cache files
 __pycache__/
-*.pyc
+*.py[cod]
 *.pyo
 *.pyd
+
+# Ignore virtual environments
+venv/
+env/
+.venv/
+ENV/
+
+# Ignore system files
+.DS_Store
+Thumbs.db
+
+# Ignore token and credentials
+credentials.json
+token.json
+token_*.json
+
+# Ignore secrets
 .env
 .streamlit/secrets.toml
+
+# Ignore Jupyter Notebook checkpoints
+.ipynb_checkpoints/
+
+# Ignore logs
+*.log
+
+# Ignore IDE/editor settings
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# Ignore build artifacts
+build/
+dist/
+*.egg-info/
+
+# Ignore Streamlit static files
+.streamlit/config.toml
 
