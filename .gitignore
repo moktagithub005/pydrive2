@@ -1,5 +1,5 @@
 token.json
-credentials.json
-credentials.dat
-.streamlit/secrets.toml
 client_secrets.json
+credentials.json
+.streamlit/secrets.toml
+__pycache__/
