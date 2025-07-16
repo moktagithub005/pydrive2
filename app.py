@@ -3,391 +3,142 @@ from pydrive2.auth import GoogleAuth
 from pydrive2.drive import GoogleDrive
 import json
 import os
-import datetime
-from PIL import Image
-import io
+import tempfile
+from io import BytesIO
 
-# Enhanced authentication with better error handling
-@st.cache_resource
-def initialize_google_drive():
-    """Initialize Google Drive with proper authentication"""
-    try:
-        # Load secrets
-        creds = json.loads(st.secrets["google"]["CREDENTIALS"])
-        token = json.loads(st.secrets["google"]["TOKEN"])
-        
-        # Write credentials to file (PyDrive2 expects client_secrets.json)
-        with open("client_secrets.json", "w") as f:
-            json.dump(creds, f)
-        with open("token.json", "w") as f:
-            json.dump(token, f)
-        
-        # Authenticate with PyDrive2
-        gauth = GoogleAuth()
-        
-        # Try to load existing credentials
-        if os.path.exists("token.json"):
-            gauth.LoadCredentialsFile("token.json")
-        
-        # If no valid credentials, authorize
-        if not gauth.credentials or gauth.credentials.invalid:
-            gauth.LoadClientConfigFile("client_secrets.json")
-            gauth.Authorize()
-            gauth.SaveCredentialsFile("token.json")
-        
-        # Create Drive instance
-        drive = GoogleDrive(gauth)
-        return drive, None
-        
-    except Exception as e:
-        return None, str(e)
+# MUST BE FIRST: Set page config
+st.set_page_config(page_title="Apple Image Uploader", page_icon="🍎")
 
-# Initialize Google Drive
-drive, drive_error = initialize_google_drive()
-
-if drive_error:
-    st.error(f"Failed to initialize Google Drive: {drive_error}")
+# Step 1: Load SERVICE_ACCOUNT from secrets
+try:
+    service_account_info = json.loads(st.secrets["google"]["SERVICE_ACCOUNT"])
+except Exception as e:
+    st.error(f"❌ Error loading service account from secrets: {e}")
     st.stop()
 
-# Function to find or create the apple_dataset folder
-def get_or_create_dataset_folder():
-    """Find or create the apple_dataset folder in Google Drive"""
-    try:
-        # Search for existing folder
-        folder_list = drive.ListFile({'q': "title='apple_dataset' and mimeType='application/vnd.google-apps.folder' and trashed=false"}).GetList()
-        
-        if folder_list:
-            return folder_list[0]['id']
-        else:
-            # Create new folder
-            folder = drive.CreateFile({
-                'title': 'apple_dataset',
-                'mimeType': 'application/vnd.google-apps.folder'
-            })
-            folder.Upload()
-            return folder['id']
-    except Exception as e:
-        st.error(f"Error creating/finding folder: {str(e)}")
-        return None
+# Step 2: Save it to a temporary service_account.json file
+try:
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
+        json.dump(service_account_info, f)
+        service_account_path = f.name
+except Exception as e:
+    st.error(f"❌ Error creating service account file: {e}")
+    st.stop()
 
-# Function to upload image to Google Drive
-def upload_image_to_drive(image_file, metadata):
-    """Upload image and metadata to Google Drive"""
-    try:
-        folder_id = get_or_create_dataset_folder()
-        if not folder_id:
-            return False, "Could not create/find apple_dataset folder"
-        
-        # Generate unique filename
-        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = f"apple_{timestamp}.jpg"
-        
-        # Convert image to bytes
-        image = Image.open(image_file)
-        # Convert to RGB if needed
-        if image.mode != 'RGB':
-            image = image.convert('RGB')
-        
-        # Save image to bytes
-        img_byte_arr = io.BytesIO()
-        image.save(img_byte_arr, format='JPEG', quality=95)
-        img_byte_arr.seek(0)
-        
-        # Upload image file
-        image_drive_file = drive.CreateFile({
-            'title': filename,
-            'parents': [{'id': folder_id}]
-        })
-        image_drive_file.content = img_byte_arr
-        image_drive_file.Upload()
-        
-        # Create metadata JSON file
-        metadata_filename = f"apple_{timestamp}_metadata.json"
-        metadata_drive_file = drive.CreateFile({
-            'title': metadata_filename,
-            'parents': [{'id': folder_id}]
-        })
-        metadata_drive_file.SetContentString(json.dumps(metadata, indent=2))
-        metadata_drive_file.Upload()
-        
-        return True, f"Successfully uploaded {filename} and {metadata_filename}"
-        
-    except Exception as e:
-        return False, f"Upload failed: {str(e)}"
+# Step 3: Create proper settings.yaml content for service account
+settings_content = f"""
+client_config_backend: service
+client_config:
+  client_id: {service_account_info.get('client_id', '')}
+  client_secret: {service_account_info.get('client_secret', '')}
 
-# Initialize session state for progress tracking
-if 'total_uploads' not in st.session_state:
-    st.session_state.total_uploads = 0
-if 'current_image' not in st.session_state:
-    st.session_state.current_image = None
-if 'upload_status' not in st.session_state:
-    st.session_state.upload_status = None
+save_credentials: True
+save_credentials_backend: file
+save_credentials_file: credentials.json
 
-# App UI
-st.set_page_config(
-    page_title="Apple AI Dataset Collection", 
-    page_icon="🍎",
-    layout="wide"
-)
+get_refresh_token: True
 
-# Header with animated elements
+oauth_scope:
+  - https://www.googleapis.com/auth/drive.file
+  - https://www.googleapis.com/auth/drive.install
+
+service_config:
+  client_service_email: {service_account_info.get('client_email', '')}
+  client_user_email: {service_account_info.get('client_email', '')}
+  client_pkcs12_file_path: {service_account_path}
+  client_json_file_path: {service_account_path}
+"""
+
+# Write settings.yaml
+try:
+    with open("settings.yaml", "w") as f:
+        f.write(settings_content)
+except Exception as e:
+    st.error(f"❌ Error creating settings.yaml: {e}")
+    st.stop()
+
+# Step 4: Authenticate with PyDrive2
+try:
+    gauth = GoogleAuth(settings_file="settings.yaml")
+    gauth.ServiceAuth()  # Use ServiceAuth() instead of Authorize() for service accounts
+    drive = GoogleDrive(gauth)
+    st.success("✅ Authenticated with Google Drive successfully!")
+except Exception as e:
+    st.error(f"❌ Authentication failed: {e}")
+    st.error("Please check your service account credentials in Streamlit secrets.")
+    st.stop()
+
+# Your Google Drive folder ID for 'apple_dataset'
+FOLDER_ID = "1bHPAGisgocVuTXT6BLWycQFIncCA_x4W"  # Replace with your actual folder ID
+st.title("🍎 Apple Image Uploader for AI Dataset (IARI Delhi सहयोग)")
+
 st.markdown("""
-<div style="background: linear-gradient(90deg, #FF6B6B, #4ECDC4); padding: 20px; border-radius: 10px; margin-bottom: 20px;">
-    <h1 style="color: white; text-align: center; margin: 0;">🍎 Apple Smart Assessment Project</h1>
-    <p style="color: white; text-align: center; margin: 5px 0;">सेब स्मार्ट मूल्यांकन परियोजना</p>
-</div>
-""", unsafe_allow_html=True)
+📢 **Help us build India's largest AI-based Apple Variety Dataset!**
 
-# Progress display
-col1, col2, col3 = st.columns(3)
-with col1:
-    st.metric("Total Contributions", f"{st.session_state.total_uploads} 📸")
-with col2:
-    st.metric("Project Partner", "IARI Delhi 🏛️")
-with col3:
-    st.metric("Goal", "10,000 Images 🎯")
+**भारत का सबसे बड़ा एआई आधारित सेब डेटासेट बनाने में हमारी मदद करें!**
 
-# Welcome message
-st.markdown("""
-### 🤝 Welcome Farmer Friends! / किसान मित्रों का स्वागत है!
+🧠 This technology will help farmers assess **color, ripeness, and damage** of apples.
 
-**🎯 Our Mission / हमारा उद्देश्य:**
-- Build AI to assess apple **color percentage** / रंग प्रतिशत का आकलन
-- Determine **ripeness levels** / पकने की स्थिति निर्धारित करना  
-- Detect **damage and defects** / नुकसान और दोष की पहचान
-
-**💡 You can upload as many images as you want to help us build better AI models!**
-**आप जितनी चाहें उतनी तस्वीरें अपलोड कर सकते हैं!**
+📞 संपर्क: 7876471141
+📧 ईमेल: unisole.empower@gmail.com
 """)
 
 st.markdown("---")
 
-# Image upload section
-st.subheader("📸 Step 1: Upload Apple Image / चरण 1: सेब की तस्वीर अपलोड करें")
-
-# Image source selection
-option = st.radio(
-    "Choose image source / छवि स्रोत चुनें",
-    ["📁 Upload from device / डिवाइस से अपलोड करें", "📸 Use camera / कैमरा से लें"]
-)
-
-uploaded_file = None
-if option == "📁 Upload from device / डिवाइस से अपलोड करें":
-    uploaded_file = st.file_uploader(
-        "Upload apple image / सेब की तस्वीर अपलोड करें", 
-        type=["jpg", "jpeg", "png"],
-        help="Best quality images help us build better AI models!"
-    )
-elif option == "📸 Use camera / कैमरा से लें":
-    uploaded_file = st.camera_input(
-        "Take a picture / एक तस्वीर लें",
-        help="Hold camera steady and ensure good lighting"
+with st.form("upload_form"):
+    st.subheader("📷 Choose Image Source / छवि स्रोत चुनें")
+    source = st.radio(
+        "Select one / एक विकल्प चुनें:",
+        ["📁 Upload from device / डिवाइस से अपलोड करें", "📸 Use camera / कैमरा से लें"]
     )
 
-# Store current image in session state
-if uploaded_file is not None:
-    st.session_state.current_image = uploaded_file
+    if source == "📁 Upload from device / डिवाइस से अपलोड करें":
+        uploaded_file = st.file_uploader("Upload apple image / सेब की तस्वीर अपलोड करें", type=["jpg", "jpeg", "png"])
+    else:
+        uploaded_file = st.camera_input("Take a picture / एक तस्वीर लें")
 
-# Show image preview and assessment form only if image is uploaded
-if st.session_state.current_image is not None:
-    # Preview uploaded image
-    st.subheader("🖼️ Image Preview / छवि पूर्वावलोकन")
-    
-    # Display image with analysis
-    image = Image.open(st.session_state.current_image)
-    col1, col2 = st.columns([2, 1])
-    
-    with col1:
-        st.image(image, caption="Uploaded Apple Image", use_column_width=True)
-    
-    with col2:
-        st.success("✅ Image Quality: Good")
-        st.info(f"📏 Size: {image.size[0]}x{image.size[1]} pixels")
-        st.info(f"💾 File Size: {len(st.session_state.current_image.getvalue())/1024:.1f} KB")
-        
-        # Quality tips
-        st.markdown("**📸 Photography Tips:**")
-        st.markdown("- Good lighting ✨")
-        st.markdown("- Clear focus 🎯")
-        st.markdown("- Full apple visible 🍎")
-        st.markdown("- Neutral background 🤍")
-    
     st.markdown("---")
-    
-    # Assessment form
-    st.subheader("🔍 Step 2: Apple Assessment / चरण 2: सेब का मूल्यांकन")
-    
-    with st.form("assessment_form"):
-        # Color assessment
-        st.write("**🎨 Color Distribution / रंग वितरण:**")
-        col1, col2, col3 = st.columns(3)
-        
-        with col1:
-            red_percentage = st.slider("Red Color % / लाल रंग %", 0, 100, 50)
-        with col2:
-            green_percentage = st.slider("Green Color % / हरा रंग %", 0, 100, 30)
-        with col3:
-            yellow_percentage = st.slider("Yellow Color % / पीला रंग %", 0, 100, 20)
-        
-        # Show color distribution visually
-        total_percentage = red_percentage + green_percentage + yellow_percentage
-        if total_percentage > 100:
-            st.warning("⚠️ Total percentage should not exceed 100% / कुल प्रतिशत 100% से अधिक नहीं होना चाहिए")
-        else:
-            st.success(f"✅ Total: {total_percentage}% (Remaining: {100-total_percentage}%)")
-        
-        st.markdown("---")
-        
-        # Ripeness assessment
-        st.write("**🍎 Ripeness Level / पकने की स्थिति:**")
-        ripeness = st.selectbox("Select ripeness level / पकने की स्थिति चुनें",
-                               ["Unripe / कच्चा (Hard, very green)",
-                                "Semi-ripe / अधपका (Firm, mixed colors)",
-                                "Ripe / पका हुआ (Sweet, good colors)",
-                                "Over-ripe / अधिक पका (Soft, dull colors)"])
-        
-        st.markdown("---")
-        
-        # Damage assessment
-        st.write("**🔍 Damage Assessment / नुकसान का आकलन:**")
-        
-        col1, col2 = st.columns(2)
-        with col1:
-            surface_damage = st.multiselect("Surface Damage / सतह की क्षति",
-                                           ["Scratches / खरोंचें",
-                                            "Bruises / चोट के निशान",
-                                            "Cuts / कटाव",
-                                            "Insect damage / कीड़े का नुकसान",
-                                            "Disease spots / बीमारी के धब्बे",
-                                            "Sunburn / धूप की जलन",
-                                            "None / कोई नहीं"])
-        
-        with col2:
-            damage_severity = st.selectbox("Damage Severity / नुकसान की गंभीरता",
-                                          ["None / कोई नहीं",
-                                           "Minor / मामूली",
-                                           "Moderate / मध्यम",
-                                           "Severe / गंभीर"])
-        
-        # Submit button
-        submitted = st.form_submit_button("🚀 Submit Assessment / मूल्यांकन जमा करें", 
-                                         use_container_width=True)
-        
-        if submitted:
-            # Show uploading progress
-            with st.spinner("Uploading to Google Drive... / गूगल ड्राइव में अपलोड हो रहा है..."):
-                # Create metadata
-                metadata = {
-                    "red_percentage": red_percentage,
-                    "green_percentage": green_percentage,
-                    "yellow_percentage": yellow_percentage,
-                    "total_color_percentage": total_percentage,
-                    "ripeness": ripeness,
-                    "surface_damage": surface_damage,
-                    "damage_severity": damage_severity,
-                    "upload_timestamp": datetime.datetime.now().isoformat(),
-                    "image_size": f"{image.size[0]}x{image.size[1]}",
-                    "file_size_kb": len(st.session_state.current_image.getvalue())/1024
-                }
-                
-                # Upload to Google Drive
-                success, message = upload_image_to_drive(st.session_state.current_image, metadata)
-                
-                if success:
-                    # Success message with animation
-                    st.balloons()
-                    st.success(f"🎉 Successfully uploaded to Google Drive! / गूगल ड्राइव में सफलतापूर्वक अपलोड हो गया!")
-                    st.info(f"📁 {message}")
-                    
-                    # Update progress
-                    st.session_state.total_uploads += 1
-                    
-                    # Show contribution summary
-                    st.markdown("### 📊 Your Contribution Summary / आपका योगदान सारांश")
-                    
-                    col1, col2 = st.columns(2)
-                    with col1:
-                        st.info(f"**Color Distribution:** {red_percentage}% Red, {green_percentage}% Green, {yellow_percentage}% Yellow")
-                        st.info(f"**Ripeness:** {ripeness}")
-                    with col2:
-                        st.info(f"**Damage Type:** {', '.join(surface_damage) if surface_damage else 'None'}")
-                        st.info(f"**Damage Severity:** {damage_severity}")
-                    
-                    # Clear current image to allow new upload
-                    st.session_state.current_image = None
-                    
-                    # Encouragement message
-                    st.markdown("---")
-                    st.markdown("### 🌟 Upload More Images! / और तस्वीरें अपलोड करें!")
-                    st.markdown("""
-                    **🔄 You can upload as many images as you want!**
-                    **आप जितनी चाहें उतनी तस्वीरें अपलोड कर सकते हैं!**
-                    
-                    **Your images help us:**
-                    - Train better AI models 🤖
-                    - Help farmers get fair prices 💰
-                    - Reduce food waste 🌱
-                    - Build technology for rural India 🇮🇳
-                    """)
-                    
-                    # Auto-refresh after successful upload
-                    st.rerun()
-                    
-                else:
-                    st.error(f"❌ Upload failed: {message}")
-                    st.error("Please try again or contact support.")
+    st.subheader("🍏 Apple Metadata / सेब की जानकारी")
 
-# Reset button to upload another image (outside the form)
-if st.session_state.total_uploads > 0:
-    if st.button("📸 Upload Another Image / एक और तस्वीर अपलोड करें", use_container_width=True):
-        st.session_state.current_image = None
-        st.rerun()
+    col1, col2 = st.columns(2)
+    with col1:
+        quality = st.selectbox("Quality / गुणवत्ता", ["High / उच्च", "Medium / मध्यम", "Low / कम"])
+        size = st.selectbox("Size / आकार", ["Small / छोटा", "Medium / मध्यम", "Large / बड़ा"])
+    with col2:
+        ripeness = st.selectbox("Ripeness / पकने की स्थिति", ["Unripe / कच्चा", "Semi-ripe / अधपका", "Ripe / पका हुआ"])
 
-else:
-    st.info("👆 Please upload or take a picture of an apple to continue / कृपया आगे बढ़ने के लिए सेब की तस्वीर अपलोड करें या लें")
+    submitted = st.form_submit_button("📤 Upload / अपलोड करें")
 
-# Footer
-st.markdown("---")
-st.markdown("""
-<div style="text-align: center; padding: 20px; background-color: #f0f0f0; border-radius: 10px;">
-    <h4>🤝 Project Partnership</h4>
-    <p><strong>IARI Delhi</strong> | Indian Agricultural Research Institute</p>
-    <p>📞 Contact: 7876471141 | 📧 Email: unisole.empower@gmail.com</p>
-    <p><em>Building AI for Agriculture • कृषि के लिए एआई का निर्माण</em></p>
-</div>
-""", unsafe_allow_html=True)
+# Upload to Drive
+if submitted and uploaded_file:
+    try:
+        st.image(uploaded_file, caption="📸 Preview / पूर्वावलोकन", use_column_width=True)
 
-# Tips sidebar
-with st.sidebar:
-    st.header("💡 Tips for Better Images")
-    st.markdown("""
-    **📸 Photography Guidelines:**
-    - Use natural daylight
-    - Clean the apple surface
-    - Show the entire apple
-    - Include a coin for size reference
-    - Take multiple angles if possible
-    
-    **🎯 What We're Looking For:**
-    - Color variations
-    - Ripeness stages
-    - Surface defects
-    - Different varieties
-    - Various storage conditions
-    """)
-    
-    st.header("📈 Project Progress")
-    st.progress(min(st.session_state.total_uploads / 100, 1.0))  # Progress out of 100
-    st.write(f"Images collected: {st.session_state.total_uploads}")
-    
-    st.header("🏆 Contribution Stats")
-    st.markdown(f"""
-    **Your contributions today:** {st.session_state.total_uploads}
-    
-    **Keep going!** Every image helps build better AI models for farmers.
-    """)
-    
-    # Google Drive folder info
-    st.header("📁 Google Drive Info")
-    st.info("Images are uploaded to: **apple_dataset** folder")
-    st.info("Each image has a paired metadata JSON file with assessment details.")
+        # Compose filename from metadata
+        file_name = f"{quality}_{size}_{ripeness}_{uploaded_file.name if hasattr(uploaded_file, 'name') else 'captured_image.jpg'}"
+
+        # Create file in Drive
+        file_drive = drive.CreateFile({
+            'title': file_name,
+            'parents': [{'id': FOLDER_ID}]
+        })
+        
+        # Set content from uploaded file bytes
+        file_drive.SetContentFile(BytesIO(uploaded_file.getvalue()))
+        file_drive.Upload()
+
+        st.success("✅ File uploaded successfully! / फ़ाइल सफलतापूर्वक अपलोड हो गई!")
+        st.info("🎉 धन्यवाद! यह तस्वीर हमारे AI मॉडल के लिए संग्रहित कर ली गई है।\nThank you! Your image has been saved for our AI model.")
+        
+    except Exception as e:
+        st.error(f"❌ Upload failed: {e}")
+        st.error("Please try again or contact support.")
+
+# Cleanup temporary files
+try:
+    if os.path.exists(service_account_path):
+        os.unlink(service_account_path)
+    if os.path.exists("settings.yaml"):
+        os.unlink("settings.yaml")
+except:
+    pass
