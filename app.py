@@ -27,11 +27,80 @@ if not gauth.credentials or gauth.credentials.invalid:
 
 drive = GoogleDrive(gauth)
 
+# Function to find or create the apple_dataset folder
+@st.cache_data
+def get_or_create_dataset_folder():
+    """Find or create the apple_dataset folder in Google Drive"""
+    try:
+        # Search for existing folder
+        folder_list = drive.ListFile({'q': "title='apple_dataset' and mimeType='application/vnd.google-apps.folder' and trashed=false"}).GetList()
+        
+        if folder_list:
+            return folder_list[0]['id']
+        else:
+            # Create new folder
+            folder = drive.CreateFile({
+                'title': 'apple_dataset',
+                'mimeType': 'application/vnd.google-apps.folder'
+            })
+            folder.Upload()
+            return folder['id']
+    except Exception as e:
+        st.error(f"Error creating/finding folder: {str(e)}")
+        return None
+
+# Function to upload image to Google Drive
+def upload_image_to_drive(image_file, metadata):
+    """Upload image and metadata to Google Drive"""
+    try:
+        folder_id = get_or_create_dataset_folder()
+        if not folder_id:
+            return False, "Could not create/find apple_dataset folder"
+        
+        # Generate unique filename
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"apple_{timestamp}.jpg"
+        
+        # Convert image to bytes
+        image = Image.open(image_file)
+        # Convert to RGB if needed
+        if image.mode != 'RGB':
+            image = image.convert('RGB')
+        
+        # Save image to bytes
+        img_byte_arr = io.BytesIO()
+        image.save(img_byte_arr, format='JPEG', quality=95)
+        img_byte_arr.seek(0)
+        
+        # Upload image file
+        image_drive_file = drive.CreateFile({
+            'title': filename,
+            'parents': [{'id': folder_id}]
+        })
+        image_drive_file.content = img_byte_arr
+        image_drive_file.Upload()
+        
+        # Create metadata JSON file
+        metadata_filename = f"apple_{timestamp}_metadata.json"
+        metadata_drive_file = drive.CreateFile({
+            'title': metadata_filename,
+            'parents': [{'id': folder_id}]
+        })
+        metadata_drive_file.SetContentString(json.dumps(metadata, indent=2))
+        metadata_drive_file.Upload()
+        
+        return True, f"Successfully uploaded {filename} and {metadata_filename}"
+        
+    except Exception as e:
+        return False, f"Upload failed: {str(e)}"
+
 # Initialize session state for progress tracking
 if 'total_uploads' not in st.session_state:
     st.session_state.total_uploads = 0
 if 'current_image' not in st.session_state:
     st.session_state.current_image = None
+if 'upload_status' not in st.session_state:
+    st.session_state.upload_status = None
 
 # App UI
 st.set_page_config(
@@ -184,56 +253,73 @@ if st.session_state.current_image is not None:
                                          use_container_width=True)
         
         if submitted:
-            # Create metadata
-            metadata = {
-                "red_percentage": red_percentage,
-                "green_percentage": green_percentage,
-                "yellow_percentage": yellow_percentage,
-                "total_color_percentage": total_percentage,
-                "ripeness": ripeness,
-                "surface_damage": surface_damage,
-                "damage_severity": damage_severity,
-                "upload_timestamp": datetime.datetime.now().isoformat()
-            }
-            
-            # Success message with animation
-            st.balloons()
-            st.success("🎉 Thank you for your contribution! / आपके योगदान के लिए धन्यवाद!")
-            
-            # Update progress
-            st.session_state.total_uploads += 1
-            
-            # Show contribution summary
-            st.markdown("### 📊 Your Contribution Summary / आपका योगदान सारांश")
-            
-            col1, col2 = st.columns(2)
-            with col1:
-                st.info(f"**Color Distribution:** {red_percentage}% Red, {green_percentage}% Green, {yellow_percentage}% Yellow")
-                st.info(f"**Ripeness:** {ripeness}")
-            with col2:
-                st.info(f"**Damage Type:** {', '.join(surface_damage) if surface_damage else 'None'}")
-                st.info(f"**Damage Severity:** {damage_severity}")
-            
-            # Clear current image to allow new upload
-            st.session_state.current_image = None
-            
-            # Encouragement message
-            st.markdown("---")
-            st.markdown("### 🌟 Upload More Images! / और तस्वीरें अपलोड करें!")
-            st.markdown("""
-            **🔄 You can upload as many images as you want!**
-            **आप जितनी चाहें उतनी तस्वीरें अपलोड कर सकते हैं!**
-            
-            **Your images help us:**
-            - Train better AI models 🤖
-            - Help farmers get fair prices 💰
-            - Reduce food waste 🌱
-            - Build technology for rural India 🇮🇳
-            """)
-            
+            # Show uploading progress
+            with st.spinner("Uploading to Google Drive... / गूगल ड्राइव में अपलोड हो रहा है..."):
+                # Create metadata
+                metadata = {
+                    "red_percentage": red_percentage,
+                    "green_percentage": green_percentage,
+                    "yellow_percentage": yellow_percentage,
+                    "total_color_percentage": total_percentage,
+                    "ripeness": ripeness,
+                    "surface_damage": surface_damage,
+                    "damage_severity": damage_severity,
+                    "upload_timestamp": datetime.datetime.now().isoformat(),
+                    "image_size": f"{image.size[0]}x{image.size[1]}",
+                    "file_size_kb": len(st.session_state.current_image.getvalue())/1024
+                }
+                
+                # Upload to Google Drive
+                success, message = upload_image_to_drive(st.session_state.current_image, metadata)
+                
+                if success:
+                    # Success message with animation
+                    st.balloons()
+                    st.success(f"🎉 Successfully uploaded to Google Drive! / गूगल ड्राइव में सफलतापूर्वक अपलोड हो गया!")
+                    st.info(f"📁 {message}")
+                    
+                    # Update progress
+                    st.session_state.total_uploads += 1
+                    
+                    # Show contribution summary
+                    st.markdown("### 📊 Your Contribution Summary / आपका योगदान सारांश")
+                    
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        st.info(f"**Color Distribution:** {red_percentage}% Red, {green_percentage}% Green, {yellow_percentage}% Yellow")
+                        st.info(f"**Ripeness:** {ripeness}")
+                    with col2:
+                        st.info(f"**Damage Type:** {', '.join(surface_damage) if surface_damage else 'None'}")
+                        st.info(f"**Damage Severity:** {damage_severity}")
+                    
+                    # Clear current image to allow new upload
+                    st.session_state.current_image = None
+                    
+                    # Encouragement message
+                    st.markdown("---")
+                    st.markdown("### 🌟 Upload More Images! / और तस्वीरें अपलोड करें!")
+                    st.markdown("""
+                    **🔄 You can upload as many images as you want!**
+                    **आप जितनी चाहें उतनी तस्वीरें अपलोड कर सकते हैं!**
+                    
+                    **Your images help us:**
+                    - Train better AI models 🤖
+                    - Help farmers get fair prices 💰
+                    - Reduce food waste 🌱
+                    - Build technology for rural India 🇮🇳
+                    """)
+                    
+                    # Auto-refresh after successful upload
+                    st.rerun()
+                    
+                else:
+                    st.error(f"❌ Upload failed: {message}")
+                    st.error("Please try again or contact support.")
+
 # Reset button to upload another image (outside the form)
 if st.session_state.total_uploads > 0:
     if st.button("📸 Upload Another Image / एक और तस्वीर अपलोड करें", use_container_width=True):
+        st.session_state.current_image = None
         st.rerun()
 
 else:
@@ -279,3 +365,8 @@ with st.sidebar:
     
     **Keep going!** Every image helps build better AI models for farmers.
     """)
+    
+    # Google Drive folder info
+    st.header("📁 Google Drive Info")
+    st.info("Images are uploaded to: **apple_dataset** folder")
+    st.info("Each image has a paired metadata JSON file with assessment details.")
