@@ -7,28 +7,49 @@ import datetime
 from PIL import Image
 import io
 
-# Load secrets
-creds = json.loads(st.secrets["google"]["CREDENTIALS"])
-token = json.loads(st.secrets["google"]["TOKEN"])
+# Enhanced authentication with better error handling
+@st.cache_resource
+def initialize_google_drive():
+    """Initialize Google Drive with proper authentication"""
+    try:
+        # Load secrets
+        creds = json.loads(st.secrets["google"]["CREDENTIALS"])
+        token = json.loads(st.secrets["google"]["TOKEN"])
+        
+        # Write credentials to file (PyDrive2 expects client_secrets.json)
+        with open("client_secrets.json", "w") as f:
+            json.dump(creds, f)
+        with open("token.json", "w") as f:
+            json.dump(token, f)
+        
+        # Authenticate with PyDrive2
+        gauth = GoogleAuth()
+        
+        # Try to load existing credentials
+        if os.path.exists("token.json"):
+            gauth.LoadCredentialsFile("token.json")
+        
+        # If no valid credentials, authorize
+        if not gauth.credentials or gauth.credentials.invalid:
+            gauth.LoadClientConfigFile("client_secrets.json")
+            gauth.Authorize()
+            gauth.SaveCredentialsFile("token.json")
+        
+        # Create Drive instance
+        drive = GoogleDrive(gauth)
+        return drive, None
+        
+    except Exception as e:
+        return None, str(e)
 
-# Write credentials to file
-with open("credentials.json", "w") as f:
-    json.dump(creds, f)
-with open("token.json", "w") as f:
-    json.dump(token, f)
+# Initialize Google Drive
+drive, drive_error = initialize_google_drive()
 
-# Authenticate with PyDrive2
-gauth = GoogleAuth()
-gauth.LoadCredentialsFile("token.json")
-if not gauth.credentials or gauth.credentials.invalid:
-    gauth.LoadClientConfigFile("credentials.json")
-    gauth.Authorize()
-    gauth.SaveCredentialsFile("token.json")
-
-drive = GoogleDrive(gauth)
+if drive_error:
+    st.error(f"Failed to initialize Google Drive: {drive_error}")
+    st.stop()
 
 # Function to find or create the apple_dataset folder
-@st.cache_data
 def get_or_create_dataset_folder():
     """Find or create the apple_dataset folder in Google Drive"""
     try:
