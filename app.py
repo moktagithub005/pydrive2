@@ -157,7 +157,7 @@ if st.session_state.auth_success:
     # Upload to Drive
     if submitted and uploaded_file:
         try:
-            st.image(uploaded_file, caption="📸 Preview / पूर्वावलोकन", use_column_width=True)
+            st.image(uploaded_file, caption="📸 Preview / पूर्वावलोकन", use_container_width=True)
 
             # Compose filename from metadata
             file_name = f"{quality}_{size}_{ripeness}_{uploaded_file.name if hasattr(uploaded_file, 'name') else 'captured_image.jpg'}"
@@ -169,9 +169,18 @@ if st.session_state.auth_success:
                     'parents': [{'id': FOLDER_ID}]
                 })
                 
-                # Set content from uploaded file bytes
-                file_drive.SetContentFile(BytesIO(uploaded_file.getvalue()))
+                # Create temporary file for upload
+                with tempfile.NamedTemporaryFile(delete=False, suffix='.jpg') as tmp_file:
+                    tmp_file.write(uploaded_file.getvalue())
+                    tmp_file_path = tmp_file.name
+                
+                # Set content from temporary file
+                file_drive.SetContentFile(tmp_file_path)
                 file_drive.Upload()
+                
+                # Clean up temporary file
+                if os.path.exists(tmp_file_path):
+                    os.unlink(tmp_file_path)
 
             st.success("✅ File uploaded successfully! / फ़ाइल सफलतापूर्वक अपलोड हो गई!")
             st.info("🎉 धन्यवाद! यह तस्वीर हमारे AI मॉडल के लिए संग्रहित कर ली गई है।\nThank you! Your image has been saved for our AI model.")
