@@ -1,9 +1,11 @@
+
 import streamlit as st
 from pydrive2.auth import GoogleAuth
 from pydrive2.drive import GoogleDrive
 from oauth2client.client import OAuth2Credentials
 import tempfile
 import os
+import json
 
 # Set page title and icon
 st.set_page_config(page_title="Apple Image Uploader", page_icon="🍎")
@@ -16,13 +18,17 @@ if 'drive' not in st.session_state:
 def authenticate_google_drive():
     """Authenticate using OAuth2 with refresh token (Streamlit Cloud compatible)"""
     try:
+        # Parse the JSON strings from secrets
+        credentials = json.loads(st.secrets["google"]["CREDENTIALS"])
+        token_data = json.loads(st.secrets["google"]["TOKEN"])
+        
         settings = {
             "client_config_backend": "settings",
             "client_config": {
-                "client_id": st.secrets["google"]["client_id"],
-                "client_secret": st.secrets["google"]["client_secret"],
-                "auth_uri": st.secrets["google"]["auth_uri"],
-                "token_uri": st.secrets["google"]["token_uri"],
+                "client_id": credentials["client_id"],
+                "client_secret": credentials["client_secret"],
+                "auth_uri": credentials["auth_uri"],
+                "token_uri": credentials["token_uri"],
             },
             "save_credentials": False,
             "get_refresh_token": True,
@@ -31,25 +37,21 @@ def authenticate_google_drive():
 
         gauth = GoogleAuth(settings=settings)
 
-        # Load refresh token from Streamlit secrets
-        if "refresh_token" in st.secrets["google"]:
+        # Load refresh token from parsed token data
+        if token_data.get("refresh_token"):
             creds = OAuth2Credentials(
                 access_token=None,
-                client_id=st.secrets["google"]["client_id"],
-                client_secret=st.secrets["google"]["client_secret"],
-                refresh_token=st.secrets["google"]["refresh_token"],
+                client_id=credentials["client_id"],
+                client_secret=credentials["client_secret"],
+                refresh_token=token_data["refresh_token"],
                 token_expiry=None,
-                token_uri=st.secrets["google"]["token_uri"],
+                token_uri=credentials["token_uri"],
                 user_agent="streamlit"
             )
             gauth.credentials = creds
             gauth.Refresh()
         else:
-            # First time only: Launch browser to get refresh token
-            gauth.LocalWebserverAuth()
-            st.warning("🔐 Copy the following refresh token and paste it into Streamlit Cloud secrets:")
-            st.code(gauth.credentials.refresh_token)
-            st.stop()
+            return None, False, "❌ No refresh token found"
 
         drive = GoogleDrive(gauth)
         return drive, True, "✅ Google Drive authenticated with OAuth2!"
@@ -97,9 +99,12 @@ if st.session_state.auth_success:
         )
 
         if source == "📁 Upload from device / डिवाइस से अपलोड करें":
-            uploaded_file = st.file_uploader("Upload apple image / सेब की तस्वीर अपलोड करें", type=["jpg", "jpeg", "png"])
+            uploaded_files = st.file_uploader("Upload apple images / सेब की तस्वीरें अपलोड करें", 
+                                             type=["jpg", "jpeg", "png"], 
+                                             accept_multiple_files=True)
         else:
             uploaded_file = st.camera_input("Take a picture / एक तस्वीर लें")
+            uploaded_files = [uploaded_file] if uploaded_file else []
 
         st.markdown("---")
         st.subheader("🍏 Apple Metadata / सेब की जानकारी")
@@ -113,30 +118,69 @@ if st.session_state.auth_success:
 
         submitted = st.form_submit_button("📤 Upload / अपलोड करें")
 
-    if submitted and uploaded_file:
+    if submitted and uploaded_files:
         try:
-            st.image(uploaded_file, caption="📸 Preview / पूर्वावलोकन", use_container_width=True)
+            # Show preview of all images
+            if len(uploaded_files) > 1:
+                st.subheader(f"📸 Preview ({len(uploaded_files)} images) / पूर्वावलोकन")
+                cols = st.columns(min(3, len(uploaded_files)))  # Max 3 columns
+                for idx, file in enumerate(uploaded_files[:6]):  # Show max 6 previews
+                    with cols[idx % 3]:
+                        st.image(file, caption=f"Image {idx+1}", use_container_width=True)
+                if len(uploaded_files) > 6:
+                    st.info(f"... and {len(uploaded_files) - 6} more images")
+            else:
+                st.image(uploaded_files[0], caption="📸 Preview / पूर्वावलोकन", use_container_width=True)
 
-            file_name = f"{quality}_{size}_{ripeness}_{uploaded_file.name if hasattr(uploaded_file, 'name') else 'captured_image.jpg'}"
+            # Upload progress
+            progress_bar = st.progress(0)
+            status_text = st.empty()
+            
+            success_count = 0
+            total_files = len(uploaded_files)
+            
+            for idx, file in enumerate(uploaded_files):
+                # Update progress
+                progress = (idx + 1) / total_files
+                progress_bar.progress(progress)
+                status_text.text(f"⬆️ Uploading {idx + 1}/{total_files}: {file.name if hasattr(file, 'name') else f'captured_image_{idx+1}.jpg'}")
 
-            with st.spinner("⬆️ Uploading to Google Drive..."):
-                file_drive = st.session_state.drive.CreateFile({
-                    'title': file_name,
-                    'parents': [{'id': FOLDER_ID}]
-                })
+                try:
+                    file_name = f"{quality}_{size}_{ripeness}_{file.name if hasattr(file, 'name') else f'captured_image_{idx+1}.jpg'}"
 
-                with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as tmp_file:
-                    tmp_file.write(uploaded_file.getvalue())
-                    tmp_file_path = tmp_file.name
+                    file_drive = st.session_state.drive.CreateFile({
+                        'title': file_name,
+                        'parents': [{'id': FOLDER_ID}]
+                    })
 
-                file_drive.SetContentFile(tmp_file_path)
-                file_drive.Upload()
+                    with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as tmp_file:
+                        tmp_file.write(file.getvalue())
+                        tmp_file_path = tmp_file.name
 
-                if os.path.exists(tmp_file_path):
-                    os.unlink(tmp_file_path)
+                    file_drive.SetContentFile(tmp_file_path)
+                    file_drive.Upload()
 
-            st.success("✅ File uploaded successfully!")
-            st.info("🎉 धन्यवाद! यह तस्वीर हमारे AI मॉडल के लिए संग्रहित कर ली गई है।")
+                    if os.path.exists(tmp_file_path):
+                        os.unlink(tmp_file_path)
+                    
+                    success_count += 1
+
+                except Exception as e:
+                    st.error(f"❌ Failed to upload {file.name if hasattr(file, 'name') else f'image_{idx+1}'}: {str(e)}")
+
+            # Final status
+            progress_bar.progress(1.0)
+            status_text.text("✅ Upload completed!")
+            
+            if success_count == total_files:
+                st.success(f"✅ All {success_count} files uploaded successfully!")
+            elif success_count > 0:
+                st.warning(f"⚠️ {success_count}/{total_files} files uploaded successfully!")
+            else:
+                st.error("❌ No files were uploaded successfully!")
+                
+            if success_count > 0:
+                st.info("🎉 धन्यवाद! ये तस्वीरें हमारे AI मॉडल के लिए संग्रहित कर ली गई हैं।")
 
         except Exception as e:
             st.error(f"❌ Upload failed: {str(e)}")
