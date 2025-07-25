@@ -1,8 +1,2 @@
-# Ignore secrets
 .streamlit/secrets.toml
-
-# Ignore local OAuth2 credentials
-credentials_module.json
-
-# Python cache and temp files
-__pycache__/
+client_secrets.json
