@@ -2,6 +2,7 @@
 import streamlit as st
 from pydrive2.auth import GoogleAuth
 from pydrive2.drive import GoogleDrive
+from oauth2client.client import OAuth2Credentials
 import tempfile
 import os
 import json
@@ -15,37 +16,49 @@ if 'drive' not in st.session_state:
     st.session_state.auth_success = False
 
 def authenticate_google_drive():
-    """Authenticate using Service Account (works for all users)"""
+    """Authenticate using OAuth2 with refresh token (Streamlit Cloud compatible)"""
     try:
-        # Parse service account JSON from secrets
-        service_account_info = json.loads(st.secrets["google"]["SERVICE_ACCOUNT"])
+        # Parse the JSON strings from secrets
+        credentials = json.loads(st.secrets["google"]["CREDENTIALS"])
+        token_data = json.loads(st.secrets["google"]["TOKEN"])
         
-        # Create a temporary file with service account credentials
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as tmp_file:
-            json.dump(service_account_info, tmp_file)
-            service_account_file = tmp_file.name
-
-        # Setup GoogleAuth with service account
-        gauth = GoogleAuth()
-        gauth.settings = {
-            'client_config_backend': 'service',
-            'service_config': {
-                'client_json_file_path': service_account_file,
-                'client_user_email': service_account_info['client_email']
+        settings = {
+            "client_config_backend": "settings",
+            "client_config": {
+                "client_id": credentials["client_id"],
+                "client_secret": credentials["client_secret"],
+                "auth_uri": credentials["auth_uri"],
+                "token_uri": credentials["token_uri"],
             },
-            'oauth_scope': ['https://www.googleapis.com/auth/drive']
+            "save_credentials": False,
+            "get_refresh_token": True,
+            "oauth_scope": ["https://www.googleapis.com/auth/drive.file"]
         }
-        gauth.ServiceAuth()
-        
-        # Clean up temporary file
-        if os.path.exists(service_account_file):
-            os.unlink(service_account_file)
-            
+
+        gauth = GoogleAuth(settings=settings)
+
+        # Load refresh token from parsed token data
+        if token_data.get("refresh_token"):
+            from oauth2client.client import OAuth2Credentials
+            creds = OAuth2Credentials(
+                access_token=None,
+                client_id=credentials["client_id"],
+                client_secret=credentials["client_secret"],
+                refresh_token=token_data["refresh_token"],
+                token_expiry=None,
+                token_uri=credentials["token_uri"],
+                user_agent="streamlit"
+            )
+            gauth.credentials = creds
+            gauth.Refresh()
+        else:
+            return None, False, "❌ No refresh token found"
+
         drive = GoogleDrive(gauth)
-        return drive, True, "✅ Google Drive authenticated with Service Account!"
+        return drive, True, "✅ Google Drive authenticated with OAuth2!"
 
     except Exception as e:
-        return None, False, f"❌ Service Account Authentication Failed: {str(e)}"
+        return None, False, f"❌ OAuth2 Authentication Failed: {str(e)}"
 
 # Run auth
 if not st.session_state.auth_success:
